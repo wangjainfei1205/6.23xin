@@ -451,7 +451,7 @@ def render_route_planning_page():
                 st.success("✅ 航线安全检测通过！所有航段与障碍物距离符合安全要求")
 
     with col2:
-        st.subheader("🗺️ 卫星地图")
+        st.subheader("🗺️ 航线地图")
 
         center_lat, center_lng = NANJING_LAT, NANJING_LNG
         all_points = []
@@ -466,35 +466,112 @@ def render_route_planning_page():
 
         m = create_satellite_map(center_lat, center_lng)
 
+        # 绘制规划航线（青色实线）
         if st.session_state.planned_route:
-            folium.PolyLine(st.session_state.planned_route, color='#00D4AA', weight=5, opacity=0.9, popup='规划航线').add_to(m)
+            folium.PolyLine(st.session_state.planned_route, color='#00D4AA', weight=4, opacity=0.9, popup='规划航线').add_to(m)
+        # 绘制直接航线（橙色虚线）
         elif len(data['waypoints']) >= 2:
             route_coords = [(wp['lat'], wp['lng']) for wp in data['waypoints']]
-            folium.PolyLine(route_coords, color='#3366FF', weight=4, opacity=0.8).add_to(m)
+            folium.PolyLine(route_coords, color='#FFA500', weight=3, dash_array='10, 5', opacity=0.8).add_to(m)
 
-        for i, wp in enumerate(data['waypoints']):
-            color = 'green' if i == 0 else ('red' if i == len(data['waypoints'])-1 else 'blue')
-            folium.Marker([wp['lat'], wp['lng']], popup=f"{wp['name']} ({wp['lat']:.6f}, {wp['lng']:.6f})", icon=folium.Icon(color=color, icon='info-sign')).add_to(m)
+        # 航点标记 - 使用飞行监控的样式
+        if data['waypoints']:
+            for i, wp in enumerate(data['waypoints']):
+                if i == 0:
+                    # 起点 - 绿色
+                    folium.Marker(
+                        [wp['lat'], wp['lng']], 
+                        popup=f"🟢 起点: {wp['name']}",
+                        icon=folium.Icon(color='green', icon='play', prefix='glyphicon')
+                    ).add_to(m)
+                elif i == len(data['waypoints']) - 1:
+                    # 终点 - 红色
+                    folium.Marker(
+                        [wp['lat'], wp['lng']], 
+                        popup=f"🔴 终点: {wp['name']}",
+                        icon=folium.Icon(color='red', icon='stop', prefix='glyphicon')
+                    ).add_to(m)
+                else:
+                    # 中间航点 - 橙色圆圈标记
+                    folium.CircleMarker(
+                        [wp['lat'], wp['lng']], 
+                        radius=6, 
+                        color='#FFA500', 
+                        fillColor='#FFA500', 
+                        fillOpacity=1,
+                        weight=2,
+                        popup=f"航点 {i+1}: {wp['name']}"
+                    ).add_to(m)
 
+        # 障碍物 - 使用飞行监控的样式
         for obs in data['obstacles']:
             obs_height = obs.get('height', 50)
-            color = '#FF6B6B' if obs_height >= uav_altitude else '#4CAF50'
-            folium.Polygon(obs['coords'], color=color, fill=True, fillColor=color, fillOpacity=0.3, weight=2, 
-                        popup=f"{obs['name']} (高度: {obs_height}m)").add_to(m)
+            # 根据是否需要绕飞设置颜色
+            if obs_height >= uav_altitude:
+                color = '#FF6B6B'  # 红色 - 需要绕飞
+                fill_color = '#FF6B6B'
+                status_text = '<span style="color:red;">⚠️ 需要绕飞</span>'
+            else:
+                color = '#4CAF50'  # 绿色 - 无需绕飞
+                fill_color = '#4CAF50'
+                status_text = '<span style="color:green;">✅ 无需绕飞</span>'
             
+            folium.Polygon(
+                obs['coords'], 
+                color=color, 
+                fill=True, 
+                fillColor=fill_color, 
+                fillOpacity=0.3, 
+                weight=2,
+                popup=folium.Popup(
+                    f"<b>{obs['name']}</b><br>"
+                    f"高度: {obs_height}m<br>"
+                    f"无人机高度: {uav_altitude}m<br>"
+                    f"{status_text}",
+                    max_width=200
+                )
+            ).add_to(m)
+            
+            # 安全半径圆圈 - 橙色虚线
             obs_center_lat = sum(c[0] for c in obs['coords']) / len(obs['coords'])
             obs_center_lng = sum(c[1] for c in obs['coords']) / len(obs['coords'])
-            folium.Circle([obs_center_lat, obs_center_lng], radius=safety_radius, 
-                        color='orange', fill=False, weight=2, dash_array='5,5',
-                        popup=f"安全半径: {safety_radius}m").add_to(m)
+            folium.Circle(
+                [obs_center_lat, obs_center_lng], 
+                radius=safety_radius, 
+                color='orange', 
+                fill=False, 
+                weight=2, 
+                dash_array='5,5',
+                popup=f"安全半径: {safety_radius}m"
+            ).add_to(m)
 
+        # 临时障碍物绘制（正在圈选）
         if len(st.session_state.temp_obstacle) >= 1:
             for coord in st.session_state.temp_obstacle:
-                folium.CircleMarker(coord, radius=8, color='#FF6B6B', fill=True, fillColor='#FF6B6B', fillOpacity=1).add_to(m)
+                folium.CircleMarker(
+                    coord, 
+                    radius=6, 
+                    color='#FF6B6B', 
+                    fillColor='#FF6B6B', 
+                    fillOpacity=1,
+                    weight=2
+                ).add_to(m)
         if len(st.session_state.temp_obstacle) >= 2:
-            folium.PolyLine(st.session_state.temp_obstacle, color='#FF6B6B', weight=2, dash_array='5,5').add_to(m)
+            folium.PolyLine(
+                st.session_state.temp_obstacle, 
+                color='#FF6B6B', 
+                weight=2, 
+                dash_array='5,5'
+            ).add_to(m)
         if len(st.session_state.temp_obstacle) >= 3:
-            folium.Polygon(st.session_state.temp_obstacle, color='#FFA500', fill=True, fillColor='#FFA500', fillOpacity=0.3, weight=2).add_to(m)
+            folium.Polygon(
+                st.session_state.temp_obstacle, 
+                color='#FFA500', 
+                fill=True, 
+                fillColor='#FFA500', 
+                fillOpacity=0.3, 
+                weight=2
+            ).add_to(m)
 
         map_output = st_folium(m, width=700, height=600, key="main_map")
 
