@@ -573,7 +573,7 @@ def render_route_planning_page():
                 weight=2
             ).add_to(m)
 
-        map_output = st_folium(m, width=700, height=600, key="main_map")
+        map_output = st_folium(m, width=800, height=600, key="main_map", use_container_width=True)
 
         if map_output and map_output.get('last_clicked'):
             lat = map_output['last_clicked'].get('lat')
