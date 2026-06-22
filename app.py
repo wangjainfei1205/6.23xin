@@ -262,7 +262,7 @@ def render_route_planning_page():
     data = st.session_state.data
     planner = st.session_state.route_planner
 
-    col1, col2 = st.columns([1, 2])
+    col1, col2 = st.columns([1, 3])
 
     with col1:
         st.info(f"🎯 当前模式：{'📍 航点模式（点击地图加航点）' if st.session_state.map_click_mode == 'waypoint' else '🚧 障碍物模式（点击地图加顶点）'}")
@@ -573,7 +573,7 @@ def render_route_planning_page():
                 weight=2
             ).add_to(m)
 
-        map_output = st_folium(m, width=800, height=600, key="main_map", use_container_width=True)
+        map_output = st_folium(m, height=700, key="main_map", use_container_width=True)
 
         if map_output and map_output.get('last_clicked'):
             lat = map_output['last_clicked'].get('lat')
