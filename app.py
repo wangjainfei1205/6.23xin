@@ -262,73 +262,206 @@ def render_route_planning_page():
     data = st.session_state.data
     planner = st.session_state.route_planner
 
-    col1, col2 = st.columns([1, 3])
-
-    with col1:
-        st.info(f"🎯 当前模式：{'📍 航点模式（点击地图加航点）' if st.session_state.map_click_mode == 'waypoint' else '🚧 障碍物模式（点击地图加顶点）'}")
+    # 控制面板区域 - 使用expander折叠
+    with st.expander("🎮 控制面板（点击展开/折叠）", expanded=True):
+        col_ctrl1, col_ctrl2, col_ctrl3 = st.columns(3)
         
-        mode1, mode2 = st.columns(2)
-        with mode1:
-            if st.button("📍 航点模式", type="primary" if st.session_state.map_click_mode == "waypoint" else "secondary"):
-                st.session_state.map_click_mode = "waypoint"
-                st.rerun()
-        with mode2:
-            if st.button("🚧 障碍物模式", type="primary" if st.session_state.map_click_mode == "obstacle" else "secondary"):
-                st.session_state.map_click_mode = "obstacle"
-                st.rerun()
-
-        st.markdown("---")
-
-        uav_altitude = st.slider("✈️ 无人机飞行高度 (米)", min_value=20, max_value=500, value=data.get('uav_altitude', 100), step=10)
-        data['uav_altitude'] = uav_altitude
-        planner.set_uav_altitude(uav_altitude)
+        with col_ctrl1:
+            st.info(f"🎯 当前模式：{'📍 航点模式' if st.session_state.map_click_mode == 'waypoint' else '🚧 障碍物模式'}")
+            
+            mode1, mode2 = st.columns(2)
+            with mode1:
+                if st.button("📍 航点模式", type="primary" if st.session_state.map_click_mode == "waypoint" else "secondary", use_container_width=True):
+                    st.session_state.map_click_mode = "waypoint"
+                    st.rerun()
+            with mode2:
+                if st.button("🚧 障碍物模式", type="primary" if st.session_state.map_click_mode == "obstacle" else "secondary", use_container_width=True):
+                    st.session_state.map_click_mode = "obstacle"
+                    st.rerun()
         
-        safety_radius = st.slider("🛡️ 安全半径 (米)", min_value=10, max_value=100, value=data.get('safety_radius', 30), step=5)
-        data['safety_radius'] = safety_radius
-        planner.safety_distance = safety_radius / 111000
+        with col_ctrl2:
+            uav_altitude = st.slider("✈️ 飞行高度 (米)", min_value=20, max_value=500, value=data.get('uav_altitude', 100), step=10)
+            data['uav_altitude'] = uav_altitude
+            planner.set_uav_altitude(uav_altitude)
+            
+            safety_radius = st.slider("🛡️ 安全半径 (米)", min_value=10, max_value=100, value=data.get('safety_radius', 30), step=5)
+            data['safety_radius'] = safety_radius
+            planner.safety_distance = safety_radius / 111000
+            
+            save_data(data)
+            planner.save_route()
         
-        save_data(data)
-        planner.save_route()
+        with col_ctrl3:
+            st.subheader("🔄 绕飞路径规划")
+            if len(data['waypoints']) >= 2:
+                col_f1, col_f2, col_f3 = st.columns(3)
+                with col_f1:
+                    if st.button("⬅️ 向左绕飞", use_container_width=True, type="primary"):
+                        route = generate_route_with_flyaround(data['waypoints'], data['obstacles'], safety_radius, uav_altitude, 'left')
+                        st.session_state.planned_route = route
+                        st.success("✅ 向左绕飞航线计算完成！")
+                        st.rerun()
+                with col_f2:
+                    if st.button("🎯 最优路径", use_container_width=True, type="primary"):
+                        route = generate_route_with_flyaround(data['waypoints'], data['obstacles'], safety_radius, uav_altitude, 'optimal')
+                        st.session_state.planned_route = route
+                        st.success("✅ 最优绕飞航线计算完成！")
+                        st.rerun()
+                with col_f3:
+                    if st.button("➡️ 向右绕飞", use_container_width=True, type="primary"):
+                        route = generate_route_with_flyaround(data['waypoints'], data['obstacles'], safety_radius, uav_altitude, 'right')
+                        st.session_state.planned_route = route
+                        st.success("✅ 向右绕飞航线计算完成！")
+                        st.rerun()
+                
+                if st.session_state.planned_route:
+                    st.info(f"📊 当前规划了 {len(st.session_state.planned_route)} 个航点的绕飞路径")
+            else:
+                st.warning("⚠️ 请先添加至少2个航点")
 
-        st.markdown("---")
+    # 地图区域 - 全宽显示
+    st.subheader("🗺️ 航线地图")
+    
+    center_lat, center_lng = NANJING_LAT, NANJING_LNG
+    all_points = []
+    for wp in data['waypoints']:
+        all_points.append((wp['lat'], wp['lng']))
+    for obs in data['obstacles']:
+        for coord in obs['coords']:
+            all_points.append(coord)
+    if all_points:
+        center_lat = sum(p[0] for p in all_points) / len(all_points)
+        center_lng = sum(p[1] for p in all_points) / len(all_points)
 
-        st.subheader("🔄 绕飞路径规划")
+    m = create_satellite_map(center_lat, center_lng)
 
-        if len(data['waypoints']) >= 2:
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                if st.button("⬅️ 向左绕飞", use_container_width=True, type="primary"):
-                    route = generate_route_with_flyaround(data['waypoints'], data['obstacles'], safety_radius, uav_altitude, 'left')
-                    st.session_state.planned_route = route
-                    st.success("✅ 向左绕飞航线计算完成！")
-                    st.rerun()
+    # 绘制规划航线（青色实线）
+    if st.session_state.planned_route:
+        folium.PolyLine(st.session_state.planned_route, color='#00D4AA', weight=4, opacity=0.9, popup='规划航线').add_to(m)
+    # 绘制直接航线（橙色虚线）
+    elif len(data['waypoints']) >= 2:
+        route_coords = [(wp['lat'], wp['lng']) for wp in data['waypoints']]
+        folium.PolyLine(route_coords, color='#FFA500', weight=3, dash_array='10, 5', opacity=0.8).add_to(m)
 
-            with col2:
-                if st.button("🎯 最优路径（弧线）", use_container_width=True, type="primary"):
-                    route = generate_route_with_flyaround(data['waypoints'], data['obstacles'], safety_radius, uav_altitude, 'optimal')
-                    st.session_state.planned_route = route
-                    st.success("✅ 最优绕飞航线计算完成！")
-                    st.rerun()
+    # 航点标记
+    if data['waypoints']:
+        for i, wp in enumerate(data['waypoints']):
+            if i == 0:
+                folium.Marker(
+                    [wp['lat'], wp['lng']], 
+                    popup=f"🟢 起点: {wp['name']}",
+                    icon=folium.Icon(color='green', icon='play', prefix='glyphicon')
+                ).add_to(m)
+            elif i == len(data['waypoints']) - 1:
+                folium.Marker(
+                    [wp['lat'], wp['lng']], 
+                    popup=f"🔴 终点: {wp['name']}",
+                    icon=folium.Icon(color='red', icon='stop', prefix='glyphicon')
+                ).add_to(m)
+            else:
+                folium.CircleMarker(
+                    [wp['lat'], wp['lng']], 
+                    radius=6, 
+                    color='#FFA500', 
+                    fillColor='#FFA500', 
+                    fillOpacity=1,
+                    weight=2,
+                    popup=f"航点 {i+1}: {wp['name']}"
+                ).add_to(m)
 
-            with col3:
-                if st.button("➡️ 向右绕飞", use_container_width=True, type="primary"):
-                    route = generate_route_with_flyaround(data['waypoints'], data['obstacles'], safety_radius, uav_altitude, 'right')
-                    st.session_state.planned_route = route
-                    st.success("✅ 向右绕飞航线计算完成！")
-                    st.rerun()
-
-            if st.session_state.planned_route:
-                st.info(f"📊 当前规划了 {len(st.session_state.planned_route)} 个航点的绕飞路径")
+    # 障碍物
+    for obs in data['obstacles']:
+        obs_height = obs.get('height', 50)
+        if obs_height >= uav_altitude:
+            color = '#FF6B6B'
+            fill_color = '#FF6B6B'
+            status_text = '<span style="color:red;">⚠️ 需要绕飞</span>'
         else:
-            st.warning("⚠️ 请先添加至少2个航点才能进行绕飞规划")
+            color = '#4CAF50'
+            fill_color = '#4CAF50'
+            status_text = '<span style="color:green;">✅ 无需绕飞</span>'
+        
+        folium.Polygon(
+            obs['coords'], 
+            color=color, 
+            fill=True, 
+            fillColor=fill_color, 
+            fillOpacity=0.3, 
+            weight=2,
+            popup=folium.Popup(
+                f"<b>{obs['name']}</b><br>"
+                f"高度: {obs_height}m<br>"
+                f"无人机高度: {uav_altitude}m<br>"
+                f"{status_text}",
+                max_width=200
+            )
+        ).add_to(m)
+        
+        obs_center_lat = sum(c[0] for c in obs['coords']) / len(obs['coords'])
+        obs_center_lng = sum(c[1] for c in obs['coords']) / len(obs['coords'])
+        folium.Circle(
+            [obs_center_lat, obs_center_lng], 
+            radius=safety_radius, 
+            color='orange', 
+            fill=False, 
+            weight=2, 
+            dash_array='5,5',
+            popup=f"安全半径: {safety_radius}m"
+        ).add_to(m)
 
-        st.markdown("---")
+    # 临时障碍物绘制
+    if len(st.session_state.temp_obstacle) >= 1:
+        for coord in st.session_state.temp_obstacle:
+            folium.CircleMarker(
+                coord, 
+                radius=6, 
+                color='#FF6B6B', 
+                fillColor='#FF6B6B', 
+                fillOpacity=1,
+                weight=2
+            ).add_to(m)
+    if len(st.session_state.temp_obstacle) >= 2:
+        folium.PolyLine(
+            st.session_state.temp_obstacle, 
+            color='#FF6B6B', 
+            weight=2, 
+            dash_array='5,5'
+        ).add_to(m)
+    if len(st.session_state.temp_obstacle) >= 3:
+        folium.Polygon(
+            st.session_state.temp_obstacle, 
+            color='#FFA500', 
+            fill=True, 
+            fillColor='#FFA500', 
+            fillOpacity=0.3, 
+            weight=2
+        ).add_to(m)
 
-        tab1, tab2 = st.tabs(["📍 航点管理", "🚧 障碍物管理"])
+    map_output = st_folium(m, height=700, key="main_map", use_container_width=True)
 
-        with tab1:
-            st.subheader("添加航点")
+    if map_output and map_output.get('last_clicked'):
+        lat = map_output['last_clicked'].get('lat')
+        lng = map_output['last_clicked'].get('lng')
+        if lat and lng:
+            if st.session_state.map_click_mode == 'waypoint':
+                new_wp_name = f"航点{len(data['waypoints'])+1}"
+                data['waypoints'].append({'lat': lat, 'lng': lng, 'name': new_wp_name})
+                planner.add_waypoint(lat, lng, uav_altitude, 15.0, new_wp_name)
+                st.session_state.planned_route = []
+                save_data(data)
+                planner.save_route()
+                st.success(f"✅ {new_wp_name} 已添加到地图点击位置！")
+                st.rerun()
+            else:
+                st.session_state.temp_obstacle.append((lat, lng))
+                st.success(f"✅ 已添加第 {len(st.session_state.temp_obstacle)} 个顶点！")
+                st.rerun()
 
+    # 航点和障碍物管理 - 放在地图下方
+    col_mgmt1, col_mgmt2 = st.columns(2)
+    
+    with col_mgmt1:
+        with st.expander("📍 航点管理"):
             wp_lat = st.number_input("纬度", value=NANJING_LAT, step=0.0001, format="%.6f", key="wp_lat")
             wp_lng = st.number_input("经度", value=NANJING_LNG, step=0.0001, format="%.6f", key="wp_lng")
             wp_name = st.text_input("名称", placeholder=f"航点{len(data['waypoints'])+1}", key="wp_name")
@@ -352,8 +485,6 @@ def render_route_planning_page():
                     planner.save_route()
                     st.success("✅ 已清空")
 
-            st.markdown("---")
-
             if data['waypoints']:
                 st.subheader("航点列表")
                 for i, wp in enumerate(data['waypoints']):
@@ -368,9 +499,8 @@ def render_route_planning_page():
                             save_data(data)
                             st.rerun()
 
-        with tab2:
-            st.subheader("添加障碍物")
-
+    with col_mgmt2:
+        with st.expander("🚧 障碍物管理"):
             obs_name = st.text_input("障碍物名称", placeholder="障碍物1", key="obs_name")
             obs_height = st.number_input("障碍物高度 (米)", min_value=1, max_value=500, value=50, step=10, key="obs_height")
 
@@ -404,8 +534,6 @@ def render_route_planning_page():
                 planner.save_route()
                 st.success("✅ 已清空")
 
-            st.markdown("---")
-
             if st.session_state.temp_obstacle:
                 st.subheader("当前顶点")
                 for i, coord in enumerate(st.session_state.temp_obstacle):
@@ -425,173 +553,31 @@ def render_route_planning_page():
                             save_data(data)
                             st.rerun()
 
-        st.markdown("---")
+    # 统计信息
+    total_dist = 0
+    if len(data['waypoints']) >= 2:
+        for i in range(len(data['waypoints']) - 1):
+            total_dist += haversine(data['waypoints'][i]['lat'], data['waypoints'][i]['lng'],
+                                  data['waypoints'][i+1]['lat'], data['waypoints'][i+1]['lng']) / 1000
 
-        total_dist = 0
-        if len(data['waypoints']) >= 2:
-            for i in range(len(data['waypoints']) - 1):
-                total_dist += haversine(data['waypoints'][i]['lat'], data['waypoints'][i]['lng'],
-                                      data['waypoints'][i+1]['lat'], data['waypoints'][i+1]['lng']) / 1000
+    col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+    with col_stat1:
+        st.metric("航点数量", len(data['waypoints']))
+    with col_stat2:
+        st.metric("障碍物数量", len(data['obstacles']))
+    with col_stat3:
+        st.metric("航线距离", f"{total_dist:.2f} km")
+    with col_stat4:
+        st.metric("安全半径", f"{safety_radius}m")
 
-        col_stat1, col_stat2 = st.columns(2)
-        with col_stat1:
-            st.metric("航点数量", len(data['waypoints']))
-        with col_stat2:
-            st.metric("航线距离", f"{total_dist:.2f} km")
-
-        if len(data['waypoints']) >= 2 and len(data['obstacles']) > 0:
-            conflicts, _ = check_route_conflict(data['waypoints'], data['obstacles'], safety_radius, uav_altitude)
-            if conflicts:
-                st.markdown("---")
-                st.subheader("⚠️ 安全警告")
-                for conflict in conflicts:
-                    st.warning(conflict)
-            else:
-                st.markdown("---")
-                st.success("✅ 航线安全检测通过！所有航段与障碍物距离符合安全要求")
-
-    with col2:
-        st.subheader("🗺️ 航线地图")
-
-        center_lat, center_lng = NANJING_LAT, NANJING_LNG
-        all_points = []
-        for wp in data['waypoints']:
-            all_points.append((wp['lat'], wp['lng']))
-        for obs in data['obstacles']:
-            for coord in obs['coords']:
-                all_points.append(coord)
-        if all_points:
-            center_lat = sum(p[0] for p in all_points) / len(all_points)
-            center_lng = sum(p[1] for p in all_points) / len(all_points)
-
-        m = create_satellite_map(center_lat, center_lng)
-
-        # 绘制规划航线（青色实线）
-        if st.session_state.planned_route:
-            folium.PolyLine(st.session_state.planned_route, color='#00D4AA', weight=4, opacity=0.9, popup='规划航线').add_to(m)
-        # 绘制直接航线（橙色虚线）
-        elif len(data['waypoints']) >= 2:
-            route_coords = [(wp['lat'], wp['lng']) for wp in data['waypoints']]
-            folium.PolyLine(route_coords, color='#FFA500', weight=3, dash_array='10, 5', opacity=0.8).add_to(m)
-
-        # 航点标记 - 使用飞行监控的样式
-        if data['waypoints']:
-            for i, wp in enumerate(data['waypoints']):
-                if i == 0:
-                    # 起点 - 绿色
-                    folium.Marker(
-                        [wp['lat'], wp['lng']], 
-                        popup=f"🟢 起点: {wp['name']}",
-                        icon=folium.Icon(color='green', icon='play', prefix='glyphicon')
-                    ).add_to(m)
-                elif i == len(data['waypoints']) - 1:
-                    # 终点 - 红色
-                    folium.Marker(
-                        [wp['lat'], wp['lng']], 
-                        popup=f"🔴 终点: {wp['name']}",
-                        icon=folium.Icon(color='red', icon='stop', prefix='glyphicon')
-                    ).add_to(m)
-                else:
-                    # 中间航点 - 橙色圆圈标记
-                    folium.CircleMarker(
-                        [wp['lat'], wp['lng']], 
-                        radius=6, 
-                        color='#FFA500', 
-                        fillColor='#FFA500', 
-                        fillOpacity=1,
-                        weight=2,
-                        popup=f"航点 {i+1}: {wp['name']}"
-                    ).add_to(m)
-
-        # 障碍物 - 使用飞行监控的样式
-        for obs in data['obstacles']:
-            obs_height = obs.get('height', 50)
-            # 根据是否需要绕飞设置颜色
-            if obs_height >= uav_altitude:
-                color = '#FF6B6B'  # 红色 - 需要绕飞
-                fill_color = '#FF6B6B'
-                status_text = '<span style="color:red;">⚠️ 需要绕飞</span>'
-            else:
-                color = '#4CAF50'  # 绿色 - 无需绕飞
-                fill_color = '#4CAF50'
-                status_text = '<span style="color:green;">✅ 无需绕飞</span>'
-            
-            folium.Polygon(
-                obs['coords'], 
-                color=color, 
-                fill=True, 
-                fillColor=fill_color, 
-                fillOpacity=0.3, 
-                weight=2,
-                popup=folium.Popup(
-                    f"<b>{obs['name']}</b><br>"
-                    f"高度: {obs_height}m<br>"
-                    f"无人机高度: {uav_altitude}m<br>"
-                    f"{status_text}",
-                    max_width=200
-                )
-            ).add_to(m)
-            
-            # 安全半径圆圈 - 橙色虚线
-            obs_center_lat = sum(c[0] for c in obs['coords']) / len(obs['coords'])
-            obs_center_lng = sum(c[1] for c in obs['coords']) / len(obs['coords'])
-            folium.Circle(
-                [obs_center_lat, obs_center_lng], 
-                radius=safety_radius, 
-                color='orange', 
-                fill=False, 
-                weight=2, 
-                dash_array='5,5',
-                popup=f"安全半径: {safety_radius}m"
-            ).add_to(m)
-
-        # 临时障碍物绘制（正在圈选）
-        if len(st.session_state.temp_obstacle) >= 1:
-            for coord in st.session_state.temp_obstacle:
-                folium.CircleMarker(
-                    coord, 
-                    radius=6, 
-                    color='#FF6B6B', 
-                    fillColor='#FF6B6B', 
-                    fillOpacity=1,
-                    weight=2
-                ).add_to(m)
-        if len(st.session_state.temp_obstacle) >= 2:
-            folium.PolyLine(
-                st.session_state.temp_obstacle, 
-                color='#FF6B6B', 
-                weight=2, 
-                dash_array='5,5'
-            ).add_to(m)
-        if len(st.session_state.temp_obstacle) >= 3:
-            folium.Polygon(
-                st.session_state.temp_obstacle, 
-                color='#FFA500', 
-                fill=True, 
-                fillColor='#FFA500', 
-                fillOpacity=0.3, 
-                weight=2
-            ).add_to(m)
-
-        map_output = st_folium(m, height=700, key="main_map", use_container_width=True)
-
-        if map_output and map_output.get('last_clicked'):
-            lat = map_output['last_clicked'].get('lat')
-            lng = map_output['last_clicked'].get('lng')
-            if lat and lng:
-                if st.session_state.map_click_mode == 'waypoint':
-                    new_wp_name = f"航点{len(data['waypoints'])+1}"
-                    data['waypoints'].append({'lat': lat, 'lng': lng, 'name': new_wp_name})
-                    planner.add_waypoint(lat, lng, uav_altitude, 15.0, new_wp_name)
-                    st.session_state.planned_route = []
-                    save_data(data)
-                    planner.save_route()
-                    st.success(f"✅ {new_wp_name} 已添加到地图点击位置！")
-                    st.rerun()
-                else:
-                    st.session_state.temp_obstacle.append((lat, lng))
-                    st.success(f"✅ 已添加第 {len(st.session_state.temp_obstacle)} 个顶点！")
-                    st.rerun()
+    if len(data['waypoints']) >= 2 and len(data['obstacles']) > 0:
+        conflicts, _ = check_route_conflict(data['waypoints'], data['obstacles'], safety_radius, uav_altitude)
+        if conflicts:
+            st.subheader("⚠️ 安全警告")
+            for conflict in conflicts:
+                st.warning(conflict)
+        else:
+            st.success("✅ 航线安全检测通过！所有航段与障碍物距离符合安全要求")
 
 def calculate_heading(from_lat, from_lng, to_lat, to_lng):
     """计算从一点到另一点的航向角度（0-360度）"""
