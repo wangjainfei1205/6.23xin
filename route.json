@@ -3,15 +3,19 @@
     {
       "lat": 32.23906724033732,
       "lng": 118.74383926391603,
+      "altitude": 100.0,
+      "speed": 15.0,
       "name": "航点1"
     },
     {
       "lat": 32.23531020895148,
       "lng": 118.74495506286623,
+      "altitude": 100.0,
+      "speed": 15.0,
       "name": "航点2"
     }
   ],
   "obstacles": [],
-  "uav_altitude": 180,
-  "safety_radius": 30
+  "safety_distance": 0.0002702702702702703,
+  "uav_altitude": 180
 }

@@ -9,6 +9,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from route_planner import RoutePlanner, Point
+from coordinate_converter import wgs84_to_gcj02, gcj02_to_wgs84, wgs84_to_bd09, bd09_to_wgs84
 
 st.set_page_config(
     page_title="无人机智能化应用系统",
@@ -76,6 +77,17 @@ def init_session_state():
     if 'route_planner' not in st.session_state:
         st.session_state.route_planner = RoutePlanner()
         st.session_state.route_planner.load_route()
+    # MAVLink通信链路数据
+    if 'mavlink_messages' not in st.session_state:
+        st.session_state.mavlink_messages = []
+    if 'link_status' not in st.session_state:
+        st.session_state.link_status = {
+            'gcs_obc': {'connected': False, 'rssi': 0, 'latency': 0},
+            'obc_fcu': {'connected': False, 'rssi': 0, 'latency': 0},
+            'gcs_fcu': {'connected': False, 'rssi': 0, 'latency': 0}
+        }
+    if 'mavlink_msg_count' not in st.session_state:
+        st.session_state.mavlink_msg_count = 0
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371000
@@ -553,6 +565,62 @@ def render_route_planning_page():
                             save_data(data)
                             st.rerun()
 
+    # 坐标转换工具
+    st.markdown("---")
+    with st.expander("🌐 坐标转换工具（WGS-84 / GCJ-02 / BD-09）"):
+        col_conv1, col_conv2, col_conv3 = st.columns(3)
+        
+        with col_conv1:
+            st.subheader("输入坐标")
+            conv_lat = st.number_input("纬度", value=NANJING_LAT, step=0.0001, format="%.6f", key="conv_lat")
+            conv_lng = st.number_input("经度", value=NANJING_LNG, step=0.0001, format="%.6f", key="conv_lng")
+            from_sys = st.selectbox("源坐标系", ["WGS-84", "GCJ-02", "BD-09"], key="from_sys")
+            to_sys = st.selectbox("目标坐标系", ["GCJ-02", "WGS-84", "BD-09"], key="to_sys")
+        
+        with col_conv2:
+            st.subheader("转换结果")
+            if st.button("🔄 开始转换", use_container_width=True, type="primary"):
+                result_lng, result_lat = conv_lat, conv_lng
+                
+                if from_sys == "WGS-84" and to_sys == "GCJ-02":
+                    result_lng, result_lat = wgs84_to_gcj02(conv_lng, conv_lat)
+                elif from_sys == "GCJ-02" and to_sys == "WGS-84":
+                    result_lng, result_lat = gcj02_to_wgs84(conv_lng, conv_lat)
+                elif from_sys == "WGS-84" and to_sys == "BD-09":
+                    result_lng, result_lat = wgs84_to_bd09(conv_lng, conv_lat)
+                elif from_sys == "BD-09" and to_sys == "WGS-84":
+                    result_lng, result_lat = bd09_to_wgs84(conv_lng, conv_lat)
+                elif from_sys == to_sys:
+                    st.info("⚠️ 源坐标系和目标坐标系相同，无需转换")
+                else:
+                    st.warning("⚠️ 该转换组合暂不支持")
+                
+                st.session_state.conv_result = (result_lng, result_lat)
+                st.success("✅ 转换完成！")
+            
+            if 'conv_result' in st.session_state:
+                result_lng, result_lat = st.session_state.conv_result
+                st.metric("转换后纬度", f"{result_lat:.6f}")
+                st.metric("转换后经度", f"{result_lng:.6f}")
+        
+        with col_conv3:
+            st.subheader("快速测试")
+            st.markdown("**测试点：南京科技职业学院**")
+            st.markdown(f"- WGS-84: `{NANJING_LAT:.6f}, {NANJING_LNG:.6f}`")
+            
+            # 自动转换显示
+            gcj_lng, gcj_lat = wgs84_to_gcj02(NANJING_LNG, NANJING_LAT)
+            st.markdown(f"- GCJ-02: `{gcj_lat:.6f}, {gcj_lng:.6f}`")
+            
+            bd_lng, bd_lat = wgs84_to_bd09(NANJING_LNG, NANJING_LAT)
+            st.markdown(f"- BD-09: `{bd_lat:.6f}, {bd_lng:.6f}`")
+            
+            st.markdown("---")
+            st.markdown("**说明：**")
+            st.markdown("- WGS-84: GPS原始坐标")
+            st.markdown("- GCJ-02: 国测局坐标（火星坐标）")
+            st.markdown("- BD-09: 百度坐标")
+
     # 统计信息
     total_dist = 0
     if len(data['waypoints']) >= 2:
@@ -735,6 +803,216 @@ def render_flight_monitor_page():
 
         st_folium(m, width=700, height=500)
 
+    st.markdown("---")
+    
+    # 通信链路展示模块
+    st.subheader("📡 通信链路状态")
+    
+    col_link1, col_link2, col_link3 = st.columns(3)
+    
+    with col_link1:
+        st.markdown("**GCS ↔ OBC**")
+        gcs_obc = st.session_state.link_status['gcs_obc']
+        if st.session_state.is_simulating:
+            gcs_obc['connected'] = True
+            gcs_obc['rssi'] = random.randint(-85, -45)
+            gcs_obc['latency'] = random.randint(20, 80)
+        status_color = "🟢" if gcs_obc['connected'] else "🔴"
+        st.metric("状态", f"{status_color} {'在线' if gcs_obc['connected'] else '离线'}")
+        if gcs_obc['connected']:
+            st.metric("信号强度", f"{gcs_obc['rssi']} dBm")
+            st.metric("延迟", f"{gcs_obc['latency']} ms")
+    
+    with col_link2:
+        st.markdown("**OBC ↔ FCU**")
+        obc_fcu = st.session_state.link_status['obc_fcu']
+        if st.session_state.is_simulating:
+            obc_fcu['connected'] = True
+            obc_fcu['rssi'] = random.randint(-70, -30)
+            obc_fcu['latency'] = random.randint(5, 25)
+        status_color = "🟢" if obc_fcu['connected'] else "🔴"
+        st.metric("状态", f"{status_color} {'在线' if obc_fcu['connected'] else '离线'}")
+        if obc_fcu['connected']:
+            st.metric("信号强度", f"{obc_fcu['rssi']} dBm")
+            st.metric("延迟", f"{obc_fcu['latency']} ms")
+    
+    with col_link3:
+        st.markdown("**GCS ↔ FCU**")
+        gcs_fcu = st.session_state.link_status['gcs_fcu']
+        if st.session_state.is_simulating:
+            gcs_fcu['connected'] = True
+            gcs_fcu['rssi'] = random.randint(-90, -50)
+            gcs_fcu['latency'] = random.randint(30, 100)
+        status_color = "🟢" if gcs_fcu['connected'] else "🔴"
+        st.metric("状态", f"{status_color} {'在线' if gcs_fcu['connected'] else '离线'}")
+        if gcs_fcu['connected']:
+            st.metric("信号强度", f"{gcs_fcu['rssi']} dBm")
+            st.metric("延迟", f"{gcs_fcu['latency']} ms")
+    
+    st.markdown("---")
+    
+    # GCS-OBC-FCU 拓扑图
+    st.subheader("🌐 系统拓扑图 (GCS-OBC-FCU)")
+    
+    # 使用HTML/CSS绘制拓扑图
+    topology_html = """
+    <style>
+        .topology-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        .node {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+            text-align: center;
+            margin: 0 30px;
+        }
+        .node-gcs { background: #007bff; }
+        .node-obc { background: #28a745; }
+        .node-fcu { background: #dc3545; }
+        .connection {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0 10px;
+        }
+        .line {
+            width: 80px;
+            height: 3px;
+            background: #28a745;
+            position: relative;
+        }
+        .line::before {
+            content: '';
+            position: absolute;
+            right: -8px;
+            top: -4px;
+            width: 0;
+            height: 0;
+            border-left: 10px solid #28a745;
+            border-top: 5px solid transparent;
+            border-bottom: 5px solid transparent;
+        }
+        .line-bidirectional::after {
+            content: '';
+            position: absolute;
+            left: -8px;
+            top: -4px;
+            width: 0;
+            height: 0;
+            border-right: 10px solid #28a745;
+            border-top: 5px solid transparent;
+            border-bottom: 5px solid transparent;
+        }
+        .line-offline {
+            background: #dc3545;
+        }
+        .line-offline::before {
+            border-left-color: #dc3545;
+        }
+        .status-text {
+            font-size: 12px;
+            margin-top: 5px;
+            color: #666;
+        }
+    </style>
+    <div class="topology-container">
+        <div class="node node-gcs">
+            <div>📱</div>
+            <div>GCS</div>
+            <div style="font-size: 10px;">地面站</div>
+        </div>
+        <div class="connection">
+            <div class="line line-bidirectional" id="gcs-obc-line"></div>
+            <div class="status-text" id="gcs-obc-status">Telemetry Link</div>
+        </div>
+        <div class="node node-obc">
+            <div>🖥️</div>
+            <div>OBC</div>
+            <div style="font-size: 10px;">机载计算机</div>
+        </div>
+        <div class="connection">
+            <div class="line line-bidirectional" id="obc-fcu-line"></div>
+            <div class="status-text" id="obc-fcu-status">MAVLink</div>
+        </div>
+        <div class="node node-fcu">
+            <div>🚁</div>
+            <div>FCU</div>
+            <div style="font-size: 10px;">飞控单元</div>
+        </div>
+    </div>
+    """
+    st.components.v1.html(topology_html, height=180)
+    
+    st.markdown("---")
+    
+    # MAVLink 数据流与报文显示
+    st.subheader("📨 MAVLink 数据流")
+    
+    col_mav1, col_mav2 = st.columns([1, 2])
+    
+    with col_mav1:
+        st.markdown("**报文统计**")
+        if st.session_state.is_simulating:
+            st.session_state.mavlink_msg_count += random.randint(5, 15)
+        st.metric("总报文数", st.session_state.mavlink_msg_count)
+        st.metric("报文速率", f"{random.randint(10, 50) if st.session_state.is_simulating else 0} Hz")
+        st.metric("丢包率", f"{random.uniform(0.1, 2.5) if st.session_state.is_simulating else 0:.2f}%")
+    
+    with col_mav2:
+        st.markdown("**实时报文**")
+        
+        # 生成模拟MAVLink报文
+        if st.session_state.is_simulating:
+            msg_types = ['HEARTBEAT', 'GLOBAL_POSITION_INT', 'ATTITUDE', 'BATTERY_STATUS', 
+                        'GPS_RAW_INT', 'VFR_HUD', 'SYS_STATUS', 'MISSION_CURRENT']
+            new_msg = {
+                'time': datetime.now().strftime("%H:%M:%S.%f")[:-3],
+                'type': random.choice(msg_types),
+                'sysid': 1,
+                'compid': 1,
+                'seq': st.session_state.mavlink_msg_count
+            }
+            st.session_state.mavlink_messages.insert(0, new_msg)
+            if len(st.session_state.mavlink_messages) > 20:
+                st.session_state.mavlink_messages = st.session_state.mavlink_messages[:20]
+        
+        if st.session_state.mavlink_messages:
+            # 显示最近10条报文
+            display_msgs = st.session_state.mavlink_messages[:10]
+            msg_df = pd.DataFrame(display_msgs)
+            st.dataframe(msg_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("💡 启动模拟后显示MAVLink报文")
+    
+    # MAVLink报文详情
+    with st.expander("📋 MAVLink报文详情"):
+        if st.session_state.mavlink_messages:
+            for i, msg in enumerate(st.session_state.mavlink_messages[:5]):
+                with st.container():
+                    col_msg1, col_msg2, col_msg3 = st.columns([2, 2, 3])
+                    with col_msg1:
+                        st.markdown(f"**{msg['type']}**")
+                    with col_msg2:
+                        st.markdown(f"`sysid:{msg['sysid']}` `compid:{msg['compid']}`")
+                    with col_msg3:
+                        st.markdown(f"seq:{msg['seq']} | {msg['time']}")
+                    st.markdown("---")
+        else:
+            st.info("暂无报文数据")
+    
     st.markdown("---")
     
     st.subheader("📈 数据图表")
